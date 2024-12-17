@@ -2,10 +2,10 @@ package sqs
 
 import (
 	"context"
-	"fmt"
-	"time"
 	"crypto/md5"
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/ChewZ-life/go-pkg/mq/channel"
 	"github.com/ChewZ-life/go-pkg/mq/utils/log"
@@ -22,9 +22,10 @@ const (
 )
 
 type keyValueReq struct {
-	key   string
-	value string
-	errCh chan error
+	key          string
+	value        string
+	delaySeconds int64
+	errCh        chan error
 }
 
 // Producer 生产者
@@ -58,15 +59,20 @@ func (p *Producer) GetUserShard(key string) int {
 	return int(ret % int64(p.config.ProducerCnt))
 }
 
-func (p *Producer) Pub(key, value string) error {
+func (p *Producer) PubWithDelay(key, value string, delaySeconds int64) error {
 	shard := p.GetUserShard(key)
 	errCh := make(chan error)
 	p.msgChans[shard] <- keyValueReq{
-		key:   key,
-		value: value,
-		errCh: errCh,
+		key:          key,
+		value:        value,
+		delaySeconds: delaySeconds,
+		errCh:        errCh,
 	}
 	return <-errCh
+}
+
+func (p *Producer) Pub(key, value string) error {
+	return p.PubWithDelay(key, value, 0)
 }
 
 func (p *Producer) processMessages(i int, keyValueCh chan interface{}) {
@@ -135,6 +141,7 @@ func (p *Producer) processMessages(i int, keyValueCh chan interface{}) {
 				QueueUrl:       aws.String(p.config.QueueUrl),
 				MessageGroupId: p.config.MessageGroupId,
 				MessageBody:    aws.String(string(msgData)),
+				DelaySeconds:   aws.Int64(msg.(keyValueReq).delaySeconds),
 			}
 			_, err := service.SendMessageWithContext(ctx, input)
 			if err != nil {
